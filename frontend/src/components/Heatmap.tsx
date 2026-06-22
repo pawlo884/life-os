@@ -1,8 +1,9 @@
 interface HeatmapProps {
   data: Record<string, number>;
+  unit?: string;
 }
 
-export function Heatmap({ data }: HeatmapProps) {
+export function Heatmap({ data, unit = "pages" }: HeatmapProps) {
   const today = new Date();
   const cells: { date: string; count: number }[] = [];
 
@@ -13,11 +14,15 @@ export function Heatmap({ data }: HeatmapProps) {
     cells.push({ date: key, count: data[key] || 0 });
   }
 
+  const max = Math.max(...cells.map((c) => c.count), 1);
+
   const level = (count: number) => {
     if (count === 0) return "bg-slate-800";
-    if (count === 1) return "bg-emerald-900";
-    if (count === 2) return "bg-emerald-700";
-    return "bg-emerald-500";
+    const ratio = count / max;
+    if (ratio <= 0.25) return "bg-violet-900";
+    if (ratio <= 0.5) return "bg-violet-700";
+    if (ratio <= 0.75) return "bg-violet-500";
+    return "bg-violet-300";
   };
 
   return (
@@ -25,7 +30,7 @@ export function Heatmap({ data }: HeatmapProps) {
       {cells.map((cell) => (
         <div
           key={cell.date}
-          title={`${cell.date}: ${cell.count} workout(s)`}
+          title={`${cell.date}: ${cell.count} ${unit}`}
           className={`h-3 w-3 rounded-sm ${level(cell.count)}`}
         />
       ))}
