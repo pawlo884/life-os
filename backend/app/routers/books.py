@@ -17,7 +17,7 @@ from app.schemas.book import (
     ReadingSessionResult,
 )
 from app.schemas.book_enrichment import BookEnrichmentResult
-from app.services.book_enrichment import enrich_book as enrich_book_details
+from app.services.book_enrichment import enrich_book as enrich_book_details, format_enrich_error
 from app.services.books import enrich_book, log_reading_session, set_active_book
 
 router = APIRouter(prefix="/books", tags=["books"])
@@ -101,6 +101,7 @@ async def reading_heatmap(days: int = Query(default=365, ge=30, le=730), db: Asy
 async def enrich_book_metadata(
     title: str | None = Form(None),
     url: str | None = Form(None),
+    language: str | None = Form(None),
     image: UploadFile | None = File(None),
 ):
     image_bytes = None
@@ -115,11 +116,12 @@ async def enrich_book_metadata(
             url=url.strip() if url else None,
             image_bytes=image_bytes,
             image_mime=image_mime,
+            language=language.strip() if language else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Book lookup failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=format_enrich_error(exc)) from exc
 
 
 @router.post("/read", response_model=ReadingSessionResult)
@@ -179,6 +181,12 @@ async def update_book(book_id: int, payload: BookUpdate, db: AsyncSession = Depe
         raise HTTPException(status_code=404, detail="Book not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "total_pages" in data and data["total_pages"] < book.current_page:
+        raise HTTPException(
+            status_code=400,
+            detail="total_pages cannot be less than current_page",
+        )
+
     if data.get("is_active"):
         active = await db.execute(select(Book).where(Book.is_active.is_(True), Book.id != book_id))
         for other in active.scalars().all():

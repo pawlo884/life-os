@@ -6,11 +6,12 @@ import {
   fetchApi,
   getBookLogs,
   logReading,
+  updateBook,
   type Book,
   type ReadingLog,
   type ReadingOverview,
 } from "../api";
-import { AddBookForm, BookCard, DeleteBookButton, LogPagesForm, ReadingHistory } from "./Books";
+import { AddBookForm, BookCard, DeleteBookButton, EditTotalPages, LogPagesForm, ReadingHistory } from "./Books";
 import { Heatmap } from "./Heatmap";
 import { DashboardTile } from "./DashboardTile";
 
@@ -85,6 +86,11 @@ export function ReadingTile() {
     }
   };
 
+  const handleUpdatePages = async (bookId: number, totalPages: number) => {
+    await updateBook(bookId, { total_pages: totalPages });
+    await load();
+  };
+
   const activeBook = overview?.active_book;
   const selectedBook = books.find((b) => b.id === selectedBookId);
 
@@ -135,6 +141,9 @@ export function ReadingTile() {
               {activeBook.avg_pages_per_day ? ` · ${activeBook.avg_pages_per_day} ppd` : ""}
             </p>
           )}
+          <div className="mb-3">
+            <EditTotalPages book={activeBook} onSave={handleUpdatePages} />
+          </div>
           <LogPagesForm onSubmit={handleLogPages} activeBookTitle={activeBook.title} />
         </div>
       ) : books.length > 0 ? (
@@ -161,6 +170,7 @@ export function ReadingTile() {
                 onActivate={handleActivate}
                 onSelect={setSelectedBookId}
                 onDelete={handleDelete}
+                onUpdatePages={handleUpdatePages}
                 selected={selectedBookId === book.id}
               />
             ))}

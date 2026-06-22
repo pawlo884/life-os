@@ -3,6 +3,22 @@ import { enrichBook, type Book, type BookEnrichment, type ReadingLog } from "../
 
 type InputMode = "title" | "link" | "photo";
 
+const EDITION_LANGUAGES = [
+  { value: "", label: "Auto (from cover / title)" },
+  { value: "pl", label: "Polish" },
+  { value: "en", label: "English" },
+  { value: "de", label: "German" },
+  { value: "fr", label: "French" },
+  { value: "es", label: "Spanish" },
+  { value: "cs", label: "Czech" },
+  { value: "uk", label: "Ukrainian" },
+] as const;
+
+function languageLabel(code: string | null | undefined): string {
+  if (!code) return "";
+  return EDITION_LANGUAGES.find((l) => l.value === code)?.label ?? code.toUpperCase();
+}
+
 interface AddBookFormProps {
   onSubmit: (data: { title: string; author: string; total_pages: number }) => Promise<void>;
 }
@@ -18,6 +34,7 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [totalPages, setTotalPages] = useState("");
+  const [editionLanguage, setEditionLanguage] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +49,7 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
     setTitle("");
     setAuthor("");
     setTotalPages("");
+    setEditionLanguage("");
     setError(null);
   };
 
@@ -55,11 +73,13 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
         title: mode === "title" ? query : undefined,
         url: mode === "link" ? url : undefined,
         image: mode === "photo" ? image ?? undefined : undefined,
+        language: editionLanguage || undefined,
       });
       setEnriched(result);
       setTitle(result.title);
       setAuthor(result.author ?? "");
       setTotalPages(result.total_pages ? String(result.total_pages) : "");
+      if (result.language) setEditionLanguage(result.language);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lookup failed");
     } finally {
@@ -118,6 +138,24 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
           </button>
         ))}
       </div>
+
+      <label className="block text-xs text-slate-500">
+        Edition language
+        <select
+          value={editionLanguage}
+          onChange={(e) => {
+            setEditionLanguage(e.target.value);
+            setEnriched(null);
+          }}
+          className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
+        >
+          {EDITION_LANGUAGES.map((lang) => (
+            <option key={lang.value || "auto"} value={lang.value}>
+              {lang.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       {mode === "title" && (
         <input
@@ -182,7 +220,20 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
 
       {enriched && (
         <div className="rounded-lg border border-violet-800/40 bg-violet-950/20 p-3 text-xs text-slate-400">
-          Found via {enriched.source} · confidence: {enriched.confidence}
+          <p>
+            Found via {enriched.source} · confidence: {enriched.confidence}
+            {enriched.language ? (
+              <> · <span className="text-slate-200">{languageLabel(enriched.language)} edition</span></>
+            ) : null}
+            {enriched.total_pages ? (
+              <> · <span className="text-slate-200">{enriched.total_pages} pages</span></>
+            ) : (
+              <> · <span className="text-amber-400">page count not found</span></>
+            )}
+          </p>
+          <p className="mt-1 text-amber-300/90">
+            Editions and languages vary — verify title and page count before saving.
+          </p>
           {enriched.cover_url && (
             <img
               src={enriched.cover_url}
@@ -208,13 +259,21 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
           placeholder="Author"
           className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
         />
+        <label className="block text-xs text-slate-500">
+          Total pages
+          {enriched?.total_pages ? (
+            <span className="ml-1 text-amber-300/80">(check your edition)</span>
+          ) : null}
+        </label>
         <input
           type="number"
           min={1}
           value={totalPages}
           onChange={(e) => setTotalPages(e.target.value)}
-          placeholder="Total pages"
-          className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
+          placeholder="e.g. 180"
+          className={`w-full rounded-lg border bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500 ${
+            enriched?.total_pages ? "border-amber-700/60" : "border-slate-700"
+          }`}
           required
         />
       </div>
@@ -236,6 +295,96 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
         </button>
       </div>
     </form>
+  );
+}
+
+interface EditTotalPagesProps {
+  book: Book;
+  onSave: (bookId: number, totalPages: number) => Promise<void>;
+}
+
+export function EditTotalPages({ book, onSave }: EditTotalPagesProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(book.total_pages));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const open = () => {
+    setValue(String(book.total_pages));
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setValue(String(book.total_pages));
+    setError(null);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    const pages = parseInt(value, 10);
+    if (!pages || pages < 1) {
+      setError("Enter a valid page count");
+      return;
+    }
+    if (pages < book.current_page) {
+      setError(`Cannot be less than current page (${book.current_page})`);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onSave(book.id, pages);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={open}
+        className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700 hover:text-violet-300"
+      >
+        Edit pages
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-auto">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="number"
+          min={book.current_page || 1}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="w-24 rounded-lg border border-amber-700/60 bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-violet-500"
+          aria-label="Total pages"
+        />
+        <span className="text-xs text-slate-500">pages</span>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={save}
+          className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-500 disabled:opacity-50"
+        >
+          {loading ? "…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs hover:bg-slate-700"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
   );
 }
 
@@ -288,10 +437,11 @@ interface BookCardProps {
   onActivate: (id: number) => void;
   onSelect: (id: number) => void;
   onDelete: (id: number) => void;
+  onUpdatePages: (id: number, totalPages: number) => Promise<void>;
   selected: boolean;
 }
 
-export function BookCard({ book, onActivate, onSelect, onDelete, selected }: BookCardProps) {
+export function BookCard({ book, onActivate, onSelect, onDelete, onUpdatePages, selected }: BookCardProps) {
   return (
     <div
       className={`rounded-xl border p-4 transition-colors ${
@@ -344,6 +494,7 @@ export function BookCard({ book, onActivate, onSelect, onDelete, selected }: Boo
         >
           History
         </button>
+        <EditTotalPages book={book} onSave={onUpdatePages} />
         {!book.is_active && book.status !== "COMPLETED" && (
           <button
             onClick={() => onActivate(book.id)}

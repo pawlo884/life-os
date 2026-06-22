@@ -3,6 +3,7 @@ export interface BookEnrichment {
   author: string | null;
   total_pages: number | null;
   cover_url: string | null;
+  language: string | null;
   source: string;
   confidence: string;
 }
@@ -22,7 +23,11 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
     const detail = body.detail;
     const message = Array.isArray(detail)
       ? detail.map((d: { msg?: string }) => d.msg).join(", ")
-      : detail || `API error: ${response.status}`;
+      : typeof detail === "string"
+        ? detail.replace(/\s+/g, " ").trim()
+        : detail
+          ? String(detail)
+          : `API error: ${response.status}`;
     throw new Error(message);
   }
   if (response.status === 204) {
@@ -99,14 +104,33 @@ export async function deleteBook(bookId: number): Promise<void> {
   await fetchApi<void>(`/books/${bookId}`, { method: "DELETE" });
 }
 
+export async function updateBook(
+  bookId: number,
+  data: {
+    title?: string;
+    author?: string | null;
+    total_pages?: number;
+    current_page?: number;
+    status?: string;
+    is_active?: boolean;
+  },
+): Promise<Book> {
+  return fetchApi<Book>(`/books/${bookId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function enrichBook(input: {
   title?: string;
   url?: string;
   image?: File;
+  language?: string;
 }): Promise<BookEnrichment> {
   const form = new FormData();
   if (input.title) form.append("title", input.title);
   if (input.url) form.append("url", input.url);
   if (input.image) form.append("image", input.image);
+  if (input.language) form.append("language", input.language);
   return fetchApi<BookEnrichment>("/books/enrich", { method: "POST", body: form });
 }
