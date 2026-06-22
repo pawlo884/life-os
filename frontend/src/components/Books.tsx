@@ -239,6 +239,50 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
   );
 }
 
+interface DeleteBookButtonProps {
+  onDelete: () => void;
+  compact?: boolean;
+}
+
+export function DeleteBookButton({ onDelete, compact }: DeleteBookButtonProps) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <div className={`flex items-center gap-2 ${compact ? "" : "w-full"}`}>
+        <span className="text-xs text-red-300">Remove?</span>
+        <button
+          type="button"
+          onClick={() => {
+            onDelete();
+            setConfirming(false);
+          }}
+          className="rounded-lg bg-red-600 px-3 py-1.5 text-xs text-white hover:bg-red-500"
+        >
+          Yes, delete
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirming(false)}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs hover:bg-slate-700"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700 hover:text-red-300"
+    >
+      Delete
+    </button>
+  );
+}
+
 interface BookCardProps {
   book: Book;
   onActivate: (id: number) => void;
@@ -248,17 +292,6 @@ interface BookCardProps {
 }
 
 export function BookCard({ book, onActivate, onSelect, onDelete, selected }: BookCardProps) {
-  const [confirming, setConfirming] = useState(false);
-
-  const handleDelete = () => {
-    if (!confirming) {
-      setConfirming(true);
-      return;
-    }
-    onDelete(book.id);
-    setConfirming(false);
-  };
-
   return (
     <div
       className={`rounded-xl border p-4 transition-colors ${
@@ -319,17 +352,7 @@ export function BookCard({ book, onActivate, onSelect, onDelete, selected }: Boo
             Set active
           </button>
         )}
-        <button
-          onClick={handleDelete}
-          onBlur={() => setConfirming(false)}
-          className={`rounded-lg px-3 py-1.5 text-xs ${
-            confirming
-              ? "bg-red-600 text-white hover:bg-red-500"
-              : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-red-300"
-          }`}
-        >
-          {confirming ? "Confirm delete" : "Delete"}
-        </button>
+        <DeleteBookButton onDelete={() => onDelete(book.id)} />
       </div>
     </div>
   );

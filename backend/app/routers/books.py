@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -144,6 +144,7 @@ async def delete_book(book_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Book not found")
 
     was_active = book.is_active
+    await db.execute(delete(ReadingLog).where(ReadingLog.book_id == book_id))
     await db.delete(book)
     await db.flush()
 

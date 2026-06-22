@@ -19,7 +19,11 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || `API error: ${response.status}`);
+    const detail = body.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d: { msg?: string }) => d.msg).join(", ")
+      : detail || `API error: ${response.status}`;
+    throw new Error(message);
   }
   if (response.status === 204) {
     return undefined as T;

@@ -45,6 +45,12 @@ async def api_get(path: str) -> dict | list:
         return response.json()
 
 
+async def api_delete(path: str) -> None:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(f"{bot.api}{path}")
+        response.raise_for_status()
+
+
 @bot.tree.command(name="read", description="Log pages read today")
 @app_commands.describe(pages="Number of pages", book="Book title (optional, uses active book)")
 async def read_command(interaction: discord.Interaction, pages: int, book: str | None = None):
@@ -125,6 +131,22 @@ async def active_command(interaction: discord.Interaction, title: str):
             response.raise_for_status()
             result = response.json()
         await interaction.followup.send(f"Active book: **{result['title']}**")
+    except httpx.HTTPError as exc:
+        await interaction.followup.send(f"API error: {exc}")
+
+
+@bot.tree.command(name="delete-book", description="Remove a book from your shelf")
+@app_commands.describe(title="Book title (partial match)")
+async def delete_book_command(interaction: discord.Interaction, title: str):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        books = await api_get("/books")
+        match = next((b for b in books if title.lower() in b["title"].lower()), None)
+        if not match:
+            await interaction.followup.send(f'No book matching "{title}".')
+            return
+        await api_delete(f"/books/{match['id']}")
+        await interaction.followup.send(f"Deleted **{match['title']}** from your shelf.")
     except httpx.HTTPError as exc:
         await interaction.followup.send(f"API error: {exc}")
 

@@ -10,7 +10,7 @@ import {
   type ReadingLog,
   type ReadingOverview,
 } from "../api";
-import { AddBookForm, BookCard, LogPagesForm, ReadingHistory } from "./Books";
+import { AddBookForm, BookCard, DeleteBookButton, LogPagesForm, ReadingHistory } from "./Books";
 import { Heatmap } from "./Heatmap";
 import { DashboardTile } from "./DashboardTile";
 
@@ -21,7 +21,7 @@ export function ReadingTile() {
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
   const [logs, setLogs] = useState<ReadingLog[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   const load = useCallback(async () => {
     const [b, o, h] = await Promise.all([
@@ -74,11 +74,15 @@ export function ReadingTile() {
   };
 
   const handleDelete = async (bookId: number) => {
-    await deleteBook(bookId);
-    if (selectedBookId === bookId) {
-      setSelectedBookId(null);
+    try {
+      await deleteBook(bookId);
+      if (selectedBookId === bookId) {
+        setSelectedBookId(null);
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete book");
     }
-    await load();
   };
 
   const activeBook = overview?.active_book;
@@ -100,11 +104,19 @@ export function ReadingTile() {
 
       {activeBook ? (
         <div className="mb-5 rounded-lg border border-violet-800/30 bg-violet-950/20 p-4">
-          <p className="mb-1 text-xs text-violet-400">Active book</p>
-          <h3 className="mb-1 font-semibold">{activeBook.title}</h3>
-          {activeBook.author && (
-            <p className="mb-3 text-sm text-slate-400">{activeBook.author}</p>
-          )}
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="mb-1 text-xs text-violet-400">Active book</p>
+              <h3 className="font-semibold">{activeBook.title}</h3>
+              {activeBook.author && (
+                <p className="text-sm text-slate-400">{activeBook.author}</p>
+              )}
+            </div>
+            <DeleteBookButton
+              compact
+              onDelete={() => handleDelete(activeBook.id)}
+            />
+          </div>
           <div className="mb-1 flex justify-between text-sm">
             <span className="text-slate-400">
               {activeBook.remaining_pages} left · {activeBook.current_page}/{activeBook.total_pages}

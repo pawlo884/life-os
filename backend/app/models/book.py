@@ -22,4 +22,7 @@ class Book(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    reading_logs: Mapped[list["ReadingLog"]] = relationship(back_populates="book")
+    reading_logs: Mapped[list["ReadingLog"]] = relationship(
+        back_populates="book",
+        cascade="all, delete-orphan",
+    )
