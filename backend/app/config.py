@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     strava_client_secret: str | None = None
     strava_webhook_verify_token: str | None = None
 
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    openai_vision_model: str = "gpt-4o-mini"
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _normalize_db_url(cls, value: str) -> str:
