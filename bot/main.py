@@ -1,9 +1,8 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import date
 
 import discord
 import httpx
-from dateutil import parser as date_parser
 from discord import app_commands
 from discord.ext import commands
 
@@ -11,32 +10,6 @@ from config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("lifeos-bot")
-
-ACTIVITY_MAP = {
-    "gym": "GYM",
-    "strength": "GYM",
-    "core": "CORE",
-    "swim": "SWIM",
-    "swimming": "SWIM",
-    "run": "RUN",
-    "running": "RUN",
-    "bike": "BIKE",
-    "cycling": "BIKE",
-}
-
-JOB_STATUS_MAP = {
-    "to_apply": "to_apply",
-    "applied": "applied",
-    "sent": "applied",
-    "hr": "hr_interview",
-    "hr_interview": "hr_interview",
-    "tech": "tech_interview",
-    "tech_interview": "tech_interview",
-    "take_home": "take_home",
-    "assignment": "take_home",
-    "rejected": "rejected",
-    "offer": "offer",
-}
 
 
 class LifeOSBot(commands.Bot):
@@ -58,20 +31,6 @@ class LifeOSBot(commands.Bot):
 bot = LifeOSBot()
 
 
-def parse_due_date(text: str) -> datetime | None:
-    lowered = text.lower().strip()
-    now = datetime.now()
-    if lowered in ("today",):
-        return now.replace(hour=15, minute=0, second=0, microsecond=0)
-    if lowered in ("tomorrow",):
-        target = now + timedelta(days=1)
-        return target.replace(hour=15, minute=0, second=0, microsecond=0)
-    try:
-        return date_parser.parse(text, dayfirst=True)
-    except (ValueError, TypeError):
-        return None
-
-
 async def api_post(path: str, payload: dict) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(f"{bot.api}{path}", json=payload)
@@ -79,123 +38,93 @@ async def api_post(path: str, payload: dict) -> dict:
         return response.json()
 
 
-async def api_get(path: str) -> dict:
+async def api_get(path: str) -> dict | list:
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(f"{bot.api}{path}")
         response.raise_for_status()
         return response.json()
 
 
-@bot.tree.command(name="task", description="Add a task with a due date")
-@app_commands.describe(title="Task title", due="Date/time, e.g. tomorrow 3pm")
-async def task_command(interaction: discord.Interaction, title: str, due: str):
+@bot.tree.command(name="read", description="Log pages read today")
+@app_commands.describe(pages="Number of pages", book="Book title (optional, uses active book)")
+async def read_command(interaction: discord.Interaction, pages: int, book: str | None = None):
     await interaction.response.defer(ephemeral=True)
-    due_date = parse_due_date(due)
+    payload: dict = {"pages": pages}
+    if book:
+        payload["title"] = book
+    try:
+        result = await api_post("/books/read", payload)
+        b = result["book"]
+        eta = b.get("estimated_completion_date") or "n/a"
+        await interaction.followup.send(
+            f"**{b['title']}**: +{pages} pages → {b['current_page']}/{b['total_pages']} "
+            f"({b['completion_percent']}%). Remaining: {b['remaining_pages']}. Est. finish: {eta}."
+        )
+    except httpx.HTTPError as exc:
+        await interaction.followup.send(f"API error: {exc}")
+
+
+@bot.tree.command(name="book", description="Add a new book to your shelf")
+@app_commands.describe(title="Book title", pages="Total pages", author="Author (optional)")
+async def book_add_command(
+    interaction: discord.Interaction, title: str, pages: int, author: str | None = None
+):
+    await interaction.response.defer(ephemeral=True)
     payload = {
         "title": title,
-        "due_date": due_date.isoformat() if due_date else None,
-        "status": "TODO",
-        "is_sla_critical": False,
+        "total_pages": pages,
+        "is_active": True,
     }
+    if author:
+        payload["author"] = author
     try:
-        result = await api_post("/tasks", payload)
+        result = await api_post("/books", payload)
         await interaction.followup.send(
-            f"Task added: **{result['title']}**"
-            + (f" (due: {due_date.strftime('%Y-%m-%d %H:%M')})" if due_date else "")
+            f"Added **{result['title']}** ({pages} pages)"
+            + (f" by {author}" if author else "")
+            + " — set as active."
         )
     except httpx.HTTPError as exc:
         await interaction.followup.send(f"API error: {exc}")
 
 
-@bot.tree.command(name="workout", description="Log a manual workout")
-@app_commands.describe(type="e.g. gym, core, swim, run", duration="Duration in minutes")
-async def workout_command(interaction: discord.Interaction, type: str, duration: int):
-    await interaction.response.defer(ephemeral=True)
-    activity = ACTIVITY_MAP.get(type.lower(), type.upper())
-    payload = {
-        "source": "DISCORD_MANUAL",
-        "activity_type": activity,
-        "duration_minutes": duration,
-        "date": datetime.now().date().isoformat(),
-        "streak_impact": True,
-    }
-    try:
-        await api_post("/fitness", payload)
-        streak = await api_get("/fitness/streak")
-        await interaction.followup.send(
-            f"Workout logged: **{activity}** ({duration} min). Streak: **{streak['current_streak']}** days."
-        )
-    except httpx.HTTPError as exc:
-        await interaction.followup.send(f"API error: {exc}")
-
-
-@bot.tree.command(name="read", description="Log pages read")
-@app_commands.describe(pages="Number of pages")
-async def read_command(interaction: discord.Interaction, pages: int):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        result = await api_post("/learning/read", {"pages": pages})
-        eta = result.get("estimated_completion_date") or "n/a"
-        await interaction.followup.send(
-            f"**{result['title']}**: +{pages} pages. "
-            f"Remaining: {result['remaining_pages']}. Estimated finish: {eta}."
-        )
-    except httpx.HTTPError as exc:
-        await interaction.followup.send(f"API error: {exc}")
-
-
-@bot.tree.command(name="learn", description="Mark a course module as completed")
-@app_commands.describe(course="Course name", module="Module name")
-async def learn_command(interaction: discord.Interaction, course: str, module: str):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{bot.api}/learning/{course}/module/{module}")
-            response.raise_for_status()
-            data = response.json()
-        progress = data["progress"]
-        await interaction.followup.send(
-            f"Course **{data['course']}**, module **{data['module']}**. "
-            f"Progress: {progress['completion_percent']}%."
-        )
-    except httpx.HTTPError as exc:
-        await interaction.followup.send(f"API error: {exc}")
-
-
-@bot.tree.command(name="job", description="Add a job application to the CRM pipeline")
-@app_commands.describe(company="Company name", role="Job title", status="Pipeline status")
-async def job_command(interaction: discord.Interaction, company: str, role: str, status: str):
-    await interaction.response.defer(ephemeral=True)
-    mapped_status = JOB_STATUS_MAP.get(status.lower(), status.lower())
-    payload = {
-        "company": company,
-        "role": role,
-        "status": mapped_status,
-    }
-    try:
-        result = await api_post("/jobs", payload)
-        await interaction.followup.send(
-            f"Application added: **{result['company']}** — {result['role']} [{result['status']}]"
-        )
-    except httpx.HTTPError as exc:
-        await interaction.followup.send(f"API error: {exc}")
-
-
-@bot.tree.command(name="report", description="Daily snapshot")
-async def report_command(interaction: discord.Interaction):
+@bot.tree.command(name="books", description="Show your reading shelf")
+async def books_command(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
-        report = await api_get("/report/daily")
-        book_part = ""
-        if report.get("active_book"):
-            book_part = f" {report['remaining_book_pages']} pages left in **{report['active_book']}**."
-        risk = " (streak at risk!)" if report.get("streak_at_risk") else ""
-        apps = report["applications_sent_today"]
-        app_label = "application" if apps == 1 else "applications"
-        await interaction.followup.send(
-            f"Today: **{apps}** {app_label} sent. "
-            f"Workout streak: **{report['fitness_streak_days']}** days{risk}.{book_part}"
-        )
+        overview = await api_get("/books/overview")
+        books = await api_get("/books")
+        lines = [
+            f"**Today:** {overview['pages_today']} pages · "
+            f"**This week:** {overview['pages_this_week']} pages",
+            "",
+        ]
+        for b in books:
+            marker = "📖 " if b["is_active"] else "   "
+            lines.append(
+                f"{marker}**{b['title']}** — {b['current_page']}/{b['total_pages']} "
+                f"({b['completion_percent']}%) [{b['status']}]"
+            )
+        await interaction.followup.send("\n".join(lines))
+    except httpx.HTTPError as exc:
+        await interaction.followup.send(f"API error: {exc}")
+
+
+@bot.tree.command(name="active", description="Set a book as your active reading target")
+@app_commands.describe(title="Book title (partial match)")
+async def active_command(interaction: discord.Interaction, title: str):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        books = await api_get("/books")
+        match = next((b for b in books if title.lower() in b["title"].lower()), None)
+        if not match:
+            await interaction.followup.send(f'No book matching "{title}".')
+            return
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{bot.api}/books/{match['id']}/activate")
+            response.raise_for_status()
+            result = response.json()
+        await interaction.followup.send(f"Active book: **{result['title']}**")
     except httpx.HTTPError as exc:
         await interaction.followup.send(f"API error: {exc}")
 
