@@ -22,6 +22,7 @@ def _book_to_read(book: Book, avg_pages: float | None = None, eta: date | None =
         current_page=book.current_page,
         status=book.status,
         is_active=book.is_active,
+        cover_url=book.cover_url,
         completion_percent=percent,
         remaining_pages=remaining,
         avg_pages_per_day=avg_pages,
@@ -109,7 +110,7 @@ async def set_active_book(db: AsyncSession, book_id: int) -> Book:
 
 async def log_reading_session(
     db: AsyncSession,
-    pages: int,
+    current_page: int,
     book_id: int | None = None,
     title: str | None = None,
     log_date: date | None = None,
@@ -118,23 +119,33 @@ async def log_reading_session(
     book = await resolve_book(db, book_id, title)
     session_date = log_date or date.today()
 
-    book.current_page = min(book.current_page + pages, book.total_pages)
+    if current_page > book.total_pages:
+        raise ValueError(f"Current page cannot exceed total pages ({book.total_pages}).")
+    if current_page < book.current_page:
+        raise ValueError(
+            f"Current page cannot be less than already logged progress ({book.current_page})."
+        )
+
+    pages_logged = current_page - book.current_page
+    book.current_page = current_page
     if book.current_page >= book.total_pages:
         book.status = "COMPLETED"
         book.is_active = False
 
-    db.add(
-        ReadingLog(
-            book_id=book.id,
-            pages_read=pages,
-            log_date=session_date,
-            note=note,
+    if pages_logged > 0:
+        db.add(
+            ReadingLog(
+                book_id=book.id,
+                pages_read=pages_logged,
+                log_date=session_date,
+                note=note,
+            )
         )
-    )
     await db.commit()
     await db.refresh(book)
     return ReadingSessionResult(
         book=await enrich_book(db, book),
-        pages_logged=pages,
+        pages_logged=pages_logged,
+        current_page=book.current_page,
         log_date=session_date,
     )

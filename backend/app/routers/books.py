@@ -53,6 +53,7 @@ async def create_book(payload: BookCreate, db: AsyncSession = Depends(get_db)):
         current_page=payload.current_page,
         status=status,
         is_active=payload.is_active,
+        cover_url=payload.cover_url,
     )
     db.add(book)
     await db.commit()
@@ -100,8 +101,10 @@ async def reading_heatmap(days: int = Query(default=365, ge=30, le=730), db: Asy
 @router.post("/enrich", response_model=BookEnrichmentResult)
 async def enrich_book_metadata(
     title: str | None = Form(None),
+    author: str | None = Form(None),
     url: str | None = Form(None),
     language: str | None = Form(None),
+    cover_only: str | None = Form(None),
     image: UploadFile | None = File(None),
 ):
     image_bytes = None
@@ -110,13 +113,17 @@ async def enrich_book_metadata(
         image_bytes = await image.read()
         image_mime = image.content_type
 
+    cover_only_flag = bool(cover_only and str(cover_only).lower() not in ("false", "0", ""))
+
     try:
         return await enrich_book_details(
             title=title.strip() if title else None,
+            author=author.strip() if author else None,
             url=url.strip() if url else None,
             image_bytes=image_bytes,
             image_mime=image_mime,
             language=language.strip() if language else None,
+            cover_only=cover_only_flag,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -129,14 +136,16 @@ async def log_reading(payload: ReadingLogCreate, db: AsyncSession = Depends(get_
     try:
         return await log_reading_session(
             db,
-            pages=payload.pages,
+            current_page=payload.current_page,
             book_id=payload.book_id,
             title=payload.title,
             log_date=payload.log_date,
             note=payload.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(exc)
+        not_found = detail in {"Book not found"} or detail.startswith("No book") or detail.startswith("No active book")
+        raise HTTPException(status_code=404 if not_found else 400, detail=detail) from exc
 
 
 @router.delete("/{book_id}", status_code=204)

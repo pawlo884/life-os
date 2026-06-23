@@ -9,6 +9,7 @@ class BookBase(BaseModel):
     total_pages: int = Field(gt=0)
     current_page: int = Field(default=0, ge=0)
     status: str = "READING"
+    cover_url: str | None = Field(default=None, max_length=512)
 
 
 class BookCreate(BookBase):
@@ -22,6 +23,7 @@ class BookUpdate(BaseModel):
     current_page: int | None = Field(default=None, ge=0)
     status: str | None = None
     is_active: bool | None = None
+    cover_url: str | None = Field(default=None, max_length=512)
 
 
 class BookRead(BookBase):
@@ -36,7 +38,7 @@ class BookRead(BookBase):
 
 
 class ReadingLogCreate(BaseModel):
-    pages: int = Field(gt=0)
+    current_page: int = Field(ge=0)
     book_id: int | None = None
     title: str | None = None
     log_date: date | None = None
@@ -56,6 +58,7 @@ class ReadingLogRead(BaseModel):
 class ReadingSessionResult(BaseModel):
     book: BookRead
     pages_logged: int
+    current_page: int
     log_date: date
 
 

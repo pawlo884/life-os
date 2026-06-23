@@ -80,6 +80,7 @@ class _AiBookPayload(BaseModel):
     author: str | None = None
     total_pages: int | None = None
     language: str | None = None
+    cover_url: str | None = None
     confidence: str = "medium"
 
     @field_validator("title", mode="before")
@@ -97,6 +98,11 @@ class _AiBookPayload(BaseModel):
             return None
         pages = int(value)
         return pages if pages > 0 else None
+
+    @field_validator("cover_url", mode="before")
+    @classmethod
+    def _normalize_payload_cover(cls, value: object) -> str | None:
+        return _normalize_cover_url(value)
 
 
 def _normalize_language_code(value: str | None) -> str | None:
@@ -119,10 +125,41 @@ def _payload_to_result(payload: _AiBookPayload, *, source: str) -> BookEnrichmen
         title=payload.title,
         author=payload.author,
         total_pages=payload.total_pages,
+        cover_url=payload.cover_url,
         language=_normalize_language_code(payload.language),
         source=source,
         confidence=payload.confidence,
     )
+
+
+def _normalize_cover_url(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    url = str(value).strip()
+    if not re.match(r"^https?://", url, re.I):
+        return None
+    return url
+
+
+def _looks_like_image_url(url: str) -> bool:
+    path = url.lower().split("?", 1)[0]
+    return path.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")) or any(
+        token in path for token in ("/cover", "/okladka", "/images/", "/img/")
+    )
+
+
+async def _verify_cover_url(url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            response = await client.head(url)
+            if response.status_code >= 400:
+                response = await client.get(url, headers={"Range": "bytes=0-1023"})
+            if response.status_code >= 400:
+                return _looks_like_image_url(url)
+            content_type = response.headers.get("content-type", "").lower()
+            return "image" in content_type or _looks_like_image_url(url)
+    except httpx.HTTPError:
+        return _looks_like_image_url(url)
 
 
 def _parse_ai_book_payload(raw: str) -> _AiBookPayload:
@@ -299,7 +336,7 @@ async def _lookup_library_for_book(
 ) -> BookEnrichmentResult | None:
     primary_query = f"{title} {author}".strip() if author else title.strip()
     hit = await _open_library_lookup(primary_query, language=language)
-    if hit and (hit.total_pages or hit.page_samples):
+    if hit and (hit.total_pages or hit.page_samples or hit.cover_url):
         return hit
 
     if fallback_query and fallback_query.strip().casefold() != primary_query.casefold():
@@ -360,6 +397,136 @@ async def _ask_ai_pages(title: str, author: str | None, *, language: str | None 
         return None
 
 
+class _AiCoverPayload(BaseModel):
+    cover_url: str | None = None
+
+    @field_validator("cover_url", mode="before")
+    @classmethod
+    def _normalize_cover(cls, value: object) -> str | None:
+        return _normalize_cover_url(value)
+
+
+def _upscale_lubimyczytac_cover(url: str) -> str:
+    return re.sub(r"-\d+x\d+\.jpg$", "-352x500.jpg", url, flags=re.I)
+
+
+async def _lubimyczytac_cover_lookup(title: str, author: str | None = None) -> str | None:
+    query = f"{title} {author}".strip() if author else title.strip()
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(
+                "https://lubimyczytac.pl/szukaj/ksiazki",
+                params={"phrase": query},
+                headers={"User-Agent": "LifeOS/1.0 (book cover lookup)"},
+            )
+            response.raise_for_status()
+            match = re.search(
+                r"https://s\.lubimyczytac\.pl/upload/books/[^\"'\s]+?-\d+x\d+\.jpg",
+                response.text,
+                flags=re.I,
+            )
+            if not match:
+                return None
+            large = _upscale_lubimyczytac_cover(match.group(0))
+            if await _verify_cover_url(large):
+                return large
+            original = match.group(0)
+            return original if await _verify_cover_url(original) else None
+    except httpx.HTTPError:
+        return None
+
+
+async def _ask_ai_cover_url(title: str, author: str | None, *, language: str | None = None) -> str | None:
+    byline = f'"{title}"'
+    if author:
+        byline += f" by {author}"
+    lang_label = _language_label(language)
+    try:
+        client = get_ai_client()
+        response = await client.chat.completions.create(
+            model=get_text_model(),
+            temperature=0.1,
+            timeout=25.0,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Return JSON with key cover_url: a direct HTTPS link to a book cover image "
+                        "(jpg/png/webp), or null. "
+                        f"Use the {lang_label} edition when possible. "
+                        "Prefer bookstore and publisher CDN image URLs over catalog sites."
+                    ),
+                },
+                {"role": "user", "content": f"Cover image URL for {byline}."},
+            ],
+        )
+        raw = response.choices[0].message.content or "{}"
+        try:
+            payload = _AiCoverPayload.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, ValidationError):
+            return None
+        if not payload.cover_url:
+            return None
+        if await _verify_cover_url(payload.cover_url):
+            return payload.cover_url
+        return payload.cover_url if _looks_like_image_url(payload.cover_url) else None
+    except Exception:
+        return None
+
+
+async def _resolve_cover_url(
+    title: str,
+    author: str | None,
+    *,
+    language: str | None = None,
+) -> tuple[str | None, str]:
+    code = _normalize_language_code(language)
+    if code in (None, "pl"):
+        polish_cover = await _lubimyczytac_cover_lookup(title, author)
+        if polish_cover:
+            return polish_cover, "lubimyczytac"
+
+    ai_cover = await _ask_ai_cover_url(title, author, language=language)
+    if ai_cover:
+        return ai_cover, ai_source_label()
+
+    library = await _open_library_lookup(
+        f"{title} {author}".strip() if author else title.strip(),
+        language=language,
+    )
+    if library and library.cover_url:
+        return library.cover_url, "open_library"
+    return None, ""
+
+
+async def _ensure_cover_url(result: BookEnrichmentResult, *, language: str | None = None) -> BookEnrichmentResult:
+    if result.cover_url:
+        return result
+    cover, source = await _resolve_cover_url(result.title, result.author, language=language)
+    if cover:
+        return result.model_copy(update={"cover_url": cover, "source": source})
+    return result
+
+
+async def lookup_cover_only(
+    *,
+    title: str,
+    author: str | None = None,
+    language: str | None = None,
+) -> BookEnrichmentResult:
+    effective_language = _normalize_language_code(language)
+    cover, source = await _resolve_cover_url(title, author, language=effective_language)
+    return BookEnrichmentResult(
+        title=title,
+        author=author,
+        cover_url=cover,
+        language=effective_language,
+        source=source or ai_source_label(),
+        confidence="high" if cover else "low",
+    )
+
+
 async def _finalize_result(
     ai_result: BookEnrichmentResult,
     library: BookEnrichmentResult | None,
@@ -391,6 +558,8 @@ async def _finalize_result(
 
     total_pages, page_source = _resolve_page_count(library_samples=library_samples, ai_pages=ai_pages)
 
+    merged = await _ensure_cover_url(merged, language=effective_language)
+
     if not total_pages:
         return merged
 
@@ -406,9 +575,11 @@ async def _finalize_result(
 _AI_BOOK_SYSTEM = (
     "You identify books and return JSON with keys: "
     "title (string), author (string or null), total_pages (integer or null), "
+    "cover_url (direct https image URL or null), "
     "language (ISO 639-1 code, e.g. pl, en, de), confidence (high|medium|low). "
     "Keep title and author in the language shown on the cover or in the query — do not translate. "
-    "Page count must match that language edition when known."
+    "Page count must match that language edition when known. "
+    "For cover_url use a direct image link from a bookstore or publisher when possible."
 )
 
 
@@ -441,7 +612,8 @@ async def _ask_ai_vision(image_bytes: bytes, mime_type: str, hint: str | None) -
                 "role": "system",
                 "content": (
                     "Read the book cover image. Return JSON with keys: "
-                    "title, author, total_pages, language (ISO 639-1 from cover text), "
+                    "title, author, total_pages, cover_url (null for photo uploads), "
+                    "language (ISO 639-1 from cover text), "
                     "confidence (high|medium|low). "
                     "Copy title and author exactly as printed on the cover — do not translate to English. "
                     "Detect language from the cover typography. "
@@ -483,12 +655,23 @@ def _merge(primary: BookEnrichmentResult, fallback: BookEnrichmentResult | None)
 async def enrich_book(
     *,
     title: str | None = None,
+    author: str | None = None,
     url: str | None = None,
     image_bytes: bytes | None = None,
     image_mime: str | None = None,
     language: str | None = None,
+    cover_only: bool = False,
 ) -> BookEnrichmentResult:
     language_hint = _normalize_language_code(language)
+
+    if cover_only:
+        if not title or not title.strip():
+            raise ValueError("Provide a book title for cover lookup.")
+        return await lookup_cover_only(
+            title=title.strip(),
+            author=author.strip() if author else None,
+            language=language_hint,
+        )
 
     if not any([title, url, image_bytes]):
         raise ValueError("Provide a title, link, or cover photo.")

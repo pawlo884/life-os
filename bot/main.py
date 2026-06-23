@@ -51,19 +51,21 @@ async def api_delete(path: str) -> None:
         response.raise_for_status()
 
 
-@bot.tree.command(name="read", description="Log pages read today")
-@app_commands.describe(pages="Number of pages", book="Book title (optional, uses active book)")
-async def read_command(interaction: discord.Interaction, pages: int, book: str | None = None):
+@bot.tree.command(name="read", description="Update your current page in the active book")
+@app_commands.describe(page="Current page number", book="Book title (optional, uses active book)")
+async def read_command(interaction: discord.Interaction, page: int, book: str | None = None):
     await interaction.response.defer(ephemeral=True)
-    payload: dict = {"pages": pages}
+    payload: dict = {"current_page": page}
     if book:
         payload["title"] = book
     try:
         result = await api_post("/books/read", payload)
         b = result["book"]
         eta = b.get("estimated_completion_date") or "n/a"
+        delta = result.get("pages_logged", 0)
+        delta_note = f" (+{delta} pages)" if delta else ""
         await interaction.followup.send(
-            f"**{b['title']}**: +{pages} pages → {b['current_page']}/{b['total_pages']} "
+            f"**{b['title']}**: page {b['current_page']}/{b['total_pages']}{delta_note} "
             f"({b['completion_percent']}%). Remaining: {b['remaining_pages']}. Est. finish: {eta}."
         )
     except httpx.HTTPError as exc:

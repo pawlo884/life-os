@@ -20,7 +20,12 @@ function languageLabel(code: string | null | undefined): string {
 }
 
 interface AddBookFormProps {
-  onSubmit: (data: { title: string; author: string; total_pages: number }) => Promise<void>;
+  onSubmit: (data: {
+    title: string;
+    author: string;
+    total_pages: number;
+    cover_url?: string | null;
+  }) => Promise<void>;
 }
 
 export function AddBookForm({ onSubmit }: AddBookFormProps) {
@@ -34,6 +39,7 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [totalPages, setTotalPages] = useState("");
+  const [coverUrl, setCoverUrl] = useState("");
   const [editionLanguage, setEditionLanguage] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -49,6 +55,7 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
     setTitle("");
     setAuthor("");
     setTotalPages("");
+    setCoverUrl("");
     setEditionLanguage("");
     setError(null);
   };
@@ -79,6 +86,7 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
       setTitle(result.title);
       setAuthor(result.author ?? "");
       setTotalPages(result.total_pages ? String(result.total_pages) : "");
+      setCoverUrl(result.cover_url ?? "");
       if (result.language) setEditionLanguage(result.language);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lookup failed");
@@ -93,7 +101,12 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
     if (!title || !pages) return;
     setSaveLoading(true);
     try {
-      await onSubmit({ title, author, total_pages: pages });
+      await onSubmit({
+        title,
+        author,
+        total_pages: pages,
+        cover_url: coverUrl.trim() || null,
+      });
       close();
     } finally {
       setSaveLoading(false);
@@ -260,6 +273,22 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
           className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
         />
         <label className="block text-xs text-slate-500">
+          Cover image URL
+          <input
+            value={coverUrl}
+            onChange={(e) => setCoverUrl(e.target.value)}
+            placeholder="https://…"
+            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
+          />
+        </label>
+        {coverUrl && (
+          <img
+            src={coverUrl}
+            alt="Cover preview"
+            className="mx-auto h-32 rounded-lg object-contain"
+          />
+        )}
+        <label className="block text-xs text-slate-500">
           Total pages
           {enriched?.total_pages ? (
             <span className="ml-1 text-amber-300/80">(check your edition)</span>
@@ -295,6 +324,124 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
         </button>
       </div>
     </form>
+  );
+}
+
+interface EditBookCoverProps {
+  book: Book;
+  onSave: (bookId: number, coverUrl: string | null) => Promise<void>;
+}
+
+export function EditBookCover({ book, onSave }: EditBookCoverProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(book.cover_url ?? "");
+  const [loading, setLoading] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const open = () => {
+    setValue(book.cover_url ?? "");
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setValue(book.cover_url ?? "");
+    setError(null);
+    setEditing(false);
+  };
+
+  const lookup = async () => {
+    setLookupLoading(true);
+    setError(null);
+    try {
+      const result = await enrichBook({
+        title: book.title,
+        author: book.author ?? undefined,
+        language: "pl",
+        cover_only: true,
+      });
+      if (result.cover_url) {
+        setValue(result.cover_url);
+      } else {
+        setError("No cover found — paste an image URL manually.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Cover lookup failed");
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const save = async () => {
+    const trimmed = value.trim();
+    if (trimmed && !/^https?:\/\//i.test(trimmed)) {
+      setError("Enter a valid http(s) URL");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onSave(book.id, trimmed || null);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={open}
+        className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700 hover:text-violet-300"
+      >
+        {book.cover_url ? "Edit cover" : "Add cover"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-auto">
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="https://…"
+        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-violet-500 sm:min-w-[220px]"
+        aria-label="Cover image URL"
+      />
+      {value && (
+        <img src={value} alt="Cover preview" className="h-20 w-14 rounded object-cover" />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={lookupLoading}
+          onClick={lookup}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-violet-300 hover:bg-slate-700 disabled:opacity-50"
+        >
+          {lookupLoading ? "…" : "✨ Find cover"}
+        </button>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={save}
+          className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-500 disabled:opacity-50"
+        >
+          {loading ? "…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs hover:bg-slate-700"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
   );
 }
 
@@ -438,10 +585,19 @@ interface BookCardProps {
   onSelect: (id: number) => void;
   onDelete: (id: number) => void;
   onUpdatePages: (id: number, totalPages: number) => Promise<void>;
+  onUpdateCover: (id: number, coverUrl: string | null) => Promise<void>;
   selected: boolean;
 }
 
-export function BookCard({ book, onActivate, onSelect, onDelete, onUpdatePages, selected }: BookCardProps) {
+export function BookCard({
+  book,
+  onActivate,
+  onSelect,
+  onDelete,
+  onUpdatePages,
+  onUpdateCover,
+  selected,
+}: BookCardProps) {
   return (
     <div
       className={`rounded-xl border p-4 transition-colors ${
@@ -450,20 +606,35 @@ export function BookCard({ book, onActivate, onSelect, onDelete, onUpdatePages, 
           : "border-slate-800 bg-slate-900/50 hover:border-slate-700"
       }`}
     >
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
-          <h3 className="font-semibold">{book.title}</h3>
-          {book.author && <p className="text-sm text-slate-400">{book.author}</p>}
-        </div>
-        <div className="flex gap-1">
-          {book.is_active && (
-            <span className="rounded-full bg-violet-600/30 px-2 py-0.5 text-xs text-violet-300">
-              Active
-            </span>
-          )}
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
-            {book.status}
-          </span>
+      <div className="mb-2 flex gap-3">
+        {book.cover_url ? (
+          <img
+            src={book.cover_url}
+            alt=""
+            className="h-24 w-16 shrink-0 rounded-md object-cover shadow-sm"
+          />
+        ) : (
+          <div className="flex h-24 w-16 shrink-0 items-center justify-center rounded-md bg-slate-800 text-lg text-slate-600">
+            📖
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="font-semibold leading-snug">{book.title}</h3>
+              {book.author && <p className="text-sm text-slate-400">{book.author}</p>}
+            </div>
+            <div className="flex shrink-0 gap-1">
+              {book.is_active && (
+                <span className="rounded-full bg-violet-600/30 px-2 py-0.5 text-xs text-violet-300">
+                  Active
+                </span>
+              )}
+              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
+                {book.status}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -495,6 +666,7 @@ export function BookCard({ book, onActivate, onSelect, onDelete, onUpdatePages, 
           History
         </button>
         <EditTotalPages book={book} onSave={onUpdatePages} />
+        <EditBookCover book={book} onSave={onUpdateCover} />
         {!book.is_active && book.status !== "COMPLETED" && (
           <button
             onClick={() => onActivate(book.id)}
@@ -534,46 +706,67 @@ export function ReadingHistory({ logs, bookTitle }: ReadingHistoryProps) {
   );
 }
 
-interface LogPagesFormProps {
-  onSubmit: (pages: number) => Promise<void>;
-  activeBookTitle: string | null;
+interface LogCurrentPageFormProps {
+  onSubmit: (currentPage: number) => Promise<void>;
+  activeBook: Book;
 }
 
-export function LogPagesForm({ onSubmit, activeBookTitle }: LogPagesFormProps) {
-  const [pages, setPages] = useState("");
+export function LogCurrentPageForm({ onSubmit, activeBook }: LogCurrentPageFormProps) {
+  const [page, setPage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const minPage = activeBook.current_page || 0;
+  const maxPage = activeBook.total_pages;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const value = parseInt(pages, 10);
-    if (!value || value <= 0) return;
+    setError(null);
+    const value = parseInt(page, 10);
+    if (Number.isNaN(value) || value < 0) return;
+    if (value < minPage) {
+      setError(`Must be at least page ${minPage}`);
+      return;
+    }
+    if (value > maxPage) {
+      setError(`Cannot exceed ${maxPage} pages`);
+      return;
+    }
     setLoading(true);
     try {
       await onSubmit(value);
-      setPages("");
+      setPage("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to log progress");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex gap-2">
-      <input
-        type="number"
-        min={1}
-        value={pages}
-        onChange={(e) => setPages(e.target.value)}
-        placeholder="Pages read"
-        className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
-      />
-      <button
-        type="submit"
-        disabled={loading}
-        className="rounded-lg bg-violet-600 px-5 py-2 text-sm font-medium hover:bg-violet-500 disabled:opacity-50"
-      >
-        {loading ? "..." : "Log"}
-      </button>
-      {activeBookTitle && <p className="sr-only">Logging to {activeBookTitle}</p>}
+    <form onSubmit={handleSubmit} className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="number"
+          min={minPage}
+          max={maxPage}
+          value={page}
+          onChange={(e) => {
+            setPage(e.target.value);
+            setError(null);
+          }}
+          placeholder={`Current page (${minPage}–${maxPage})`}
+          className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
+          aria-label={`Current page for ${activeBook.title}`}
+        />
+        <button
+          type="submit"
+          disabled={loading || !page}
+          className="rounded-lg bg-violet-600 px-5 py-2 text-sm font-medium hover:bg-violet-500 disabled:opacity-50"
+        >
+          {loading ? "..." : "Update"}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
     </form>
   );
 }

@@ -44,6 +44,7 @@ export interface Book {
   current_page: number;
   status: string;
   is_active: boolean;
+  cover_url: string | null;
   completion_percent: number;
   remaining_pages: number;
   avg_pages_per_day: number | null;
@@ -69,6 +70,7 @@ export interface ReadingOverview {
 export interface ReadingSessionResult {
   book: Book;
   pages_logged: number;
+  current_page: number;
   log_date: string;
 }
 
@@ -78,6 +80,7 @@ export async function createBook(data: {
   total_pages: number;
   current_page?: number;
   is_active?: boolean;
+  cover_url?: string | null;
 }): Promise<Book> {
   return fetchApi<Book>("/books", {
     method: "POST",
@@ -85,10 +88,10 @@ export async function createBook(data: {
   });
 }
 
-export async function logReading(pages: number, bookId?: number): Promise<ReadingSessionResult> {
+export async function logReading(currentPage: number, bookId?: number): Promise<ReadingSessionResult> {
   return fetchApi<ReadingSessionResult>("/books/read", {
     method: "POST",
-    body: JSON.stringify({ pages, book_id: bookId }),
+    body: JSON.stringify({ current_page: currentPage, book_id: bookId }),
   });
 }
 
@@ -113,6 +116,7 @@ export async function updateBook(
     current_page?: number;
     status?: string;
     is_active?: boolean;
+    cover_url?: string | null;
   },
 ): Promise<Book> {
   return fetchApi<Book>(`/books/${bookId}`, {
@@ -123,14 +127,18 @@ export async function updateBook(
 
 export async function enrichBook(input: {
   title?: string;
+  author?: string;
   url?: string;
   image?: File;
   language?: string;
+  cover_only?: boolean;
 }): Promise<BookEnrichment> {
   const form = new FormData();
   if (input.title) form.append("title", input.title);
+  if (input.author) form.append("author", input.author);
   if (input.url) form.append("url", input.url);
   if (input.image) form.append("image", input.image);
   if (input.language) form.append("language", input.language);
+  if (input.cover_only) form.append("cover_only", "true");
   return fetchApi<BookEnrichment>("/books/enrich", { method: "POST", body: form });
 }

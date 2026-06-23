@@ -11,7 +11,7 @@ import {
   type ReadingLog,
   type ReadingOverview,
 } from "../api";
-import { AddBookForm, BookCard, DeleteBookButton, EditTotalPages, LogPagesForm, ReadingHistory } from "./Books";
+import { AddBookForm, BookCard, DeleteBookButton, EditBookCover, EditTotalPages, LogCurrentPageForm, ReadingHistory } from "./Books";
 import { Heatmap } from "./Heatmap";
 import { DashboardTile } from "./DashboardTile";
 
@@ -50,19 +50,25 @@ export function ReadingTile() {
       .catch((e) => setError(e.message));
   }, [selectedBookId]);
 
-  const handleLogPages = async (pages: number) => {
-    await logReading(pages);
+  const handleLogCurrentPage = async (currentPage: number) => {
+    await logReading(currentPage);
     await load();
     if (selectedBookId) {
       setLogs(await getBookLogs(selectedBookId));
     }
   };
 
-  const handleAddBook = async (data: { title: string; author: string; total_pages: number }) => {
+  const handleAddBook = async (data: {
+    title: string;
+    author: string;
+    total_pages: number;
+    cover_url?: string | null;
+  }) => {
     await createBook({
       title: data.title,
       author: data.author || undefined,
       total_pages: data.total_pages,
+      cover_url: data.cover_url,
       is_active: books.length === 0,
     });
     await load();
@@ -91,6 +97,11 @@ export function ReadingTile() {
     await load();
   };
 
+  const handleUpdateCover = async (bookId: number, coverUrl: string | null) => {
+    await updateBook(bookId, { cover_url: coverUrl });
+    await load();
+  };
+
   const activeBook = overview?.active_book;
   const selectedBook = books.find((b) => b.id === selectedBookId);
 
@@ -110,18 +121,33 @@ export function ReadingTile() {
 
       {activeBook ? (
         <div className="mb-5 rounded-lg border border-violet-800/30 bg-violet-950/20 p-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <p className="mb-1 text-xs text-violet-400">Active book</p>
-              <h3 className="font-semibold">{activeBook.title}</h3>
-              {activeBook.author && (
-                <p className="text-sm text-slate-400">{activeBook.author}</p>
-              )}
+          <div className="mb-3 flex gap-3">
+            {activeBook.cover_url ? (
+              <img
+                src={activeBook.cover_url}
+                alt=""
+                className="h-28 w-20 shrink-0 rounded-md object-cover shadow-sm"
+              />
+            ) : (
+              <div className="flex h-28 w-20 shrink-0 items-center justify-center rounded-md bg-slate-800 text-2xl text-slate-600">
+                📖
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="mb-1 text-xs text-violet-400">Active book</p>
+                  <h3 className="font-semibold">{activeBook.title}</h3>
+                  {activeBook.author && (
+                    <p className="text-sm text-slate-400">{activeBook.author}</p>
+                  )}
+                </div>
+                <DeleteBookButton
+                  compact
+                  onDelete={() => handleDelete(activeBook.id)}
+                />
+              </div>
             </div>
-            <DeleteBookButton
-              compact
-              onDelete={() => handleDelete(activeBook.id)}
-            />
           </div>
           <div className="mb-1 flex justify-between text-sm">
             <span className="text-slate-400">
@@ -141,10 +167,14 @@ export function ReadingTile() {
               {activeBook.avg_pages_per_day ? ` · ${activeBook.avg_pages_per_day} ppd` : ""}
             </p>
           )}
-          <div className="mb-3">
+          <div className="mb-3 flex flex-wrap gap-2">
             <EditTotalPages book={activeBook} onSave={handleUpdatePages} />
+            <EditBookCover book={activeBook} onSave={handleUpdateCover} />
           </div>
-          <LogPagesForm onSubmit={handleLogPages} activeBookTitle={activeBook.title} />
+          <LogCurrentPageForm
+            onSubmit={handleLogCurrentPage}
+            activeBook={activeBook}
+          />
         </div>
       ) : books.length > 0 ? (
         <p className="mb-5 text-sm text-amber-300/80">No active book — set one from your shelf.</p>
@@ -171,6 +201,7 @@ export function ReadingTile() {
                 onSelect={setSelectedBookId}
                 onDelete={handleDelete}
                 onUpdatePages={handleUpdatePages}
+                onUpdateCover={handleUpdateCover}
                 selected={selectedBookId === book.id}
               />
             ))}
