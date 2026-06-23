@@ -223,48 +223,51 @@ def _resolve_page_count(*, library_samples: list[int], ai_pages: int | None) -> 
 
 async def _open_library_lookup(query: str, *, language: str | None = None) -> BookEnrichmentResult | None:
     ol_lang = _to_open_library_language(language)
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(
-            "https://openlibrary.org/search.json",
-            params={
-                "q": query,
-                "limit": 8,
-                "fields": "title,author_name,number_of_pages_median,cover_i,edition_key,language",
-            },
-        )
-        response.raise_for_status()
-        docs = response.json().get("docs") or []
-        doc = _pick_library_doc(docs, ol_lang)
-        if not doc:
-            return None
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                "https://openlibrary.org/search.json",
+                params={
+                    "q": query,
+                    "limit": 8,
+                    "fields": "title,author_name,number_of_pages_median,cover_i,edition_key,language",
+                },
+            )
+            response.raise_for_status()
+            docs = response.json().get("docs") or []
+            doc = _pick_library_doc(docs, ol_lang)
+            if not doc:
+                return None
 
-        cover_id = doc.get("cover_i")
-        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
-        page_counts: list[int] = []
-        median_pages = doc.get("number_of_pages_median")
-        if median_pages:
-            page_counts.append(int(median_pages))
-        for edition_key in (doc.get("edition_key") or [])[:OPEN_LIBRARY_EDITION_LIMIT]:
-            try:
-                edition_pages = await _fetch_edition_pages(client, edition_key)
-            except httpx.HTTPError:
-                edition_pages = None
-            if edition_pages:
-                page_counts.append(edition_pages)
-        pages = _robust_page_count(page_counts)
-        doc_langs = doc.get("language") or []
-        detected_lang = language or _from_open_library_language(doc_langs[0] if doc_langs else None)
+            cover_id = doc.get("cover_i")
+            cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
+            page_counts: list[int] = []
+            median_pages = doc.get("number_of_pages_median")
+            if median_pages:
+                page_counts.append(int(median_pages))
+            for edition_key in (doc.get("edition_key") or [])[:OPEN_LIBRARY_EDITION_LIMIT]:
+                try:
+                    edition_pages = await _fetch_edition_pages(client, edition_key)
+                except httpx.HTTPError:
+                    edition_pages = None
+                if edition_pages:
+                    page_counts.append(edition_pages)
+            pages = _robust_page_count(page_counts)
+            doc_langs = doc.get("language") or []
+            detected_lang = language or _from_open_library_language(doc_langs[0] if doc_langs else None)
 
-        return BookEnrichmentResult(
-            title=doc.get("title") or query,
-            author=(doc.get("author_name") or [None])[0],
-            total_pages=pages,
-            cover_url=cover_url,
-            language=detected_lang,
-            source="open_library",
-            confidence="high" if pages else "medium",
-            page_samples=page_counts,
-        )
+            return BookEnrichmentResult(
+                title=doc.get("title") or query,
+                author=(doc.get("author_name") or [None])[0],
+                total_pages=pages,
+                cover_url=cover_url,
+                language=detected_lang,
+                source="open_library",
+                confidence="high" if pages else "medium",
+                page_samples=page_counts,
+            )
+    except httpx.HTTPError:
+        return None
 
 
 def _from_open_library_language(ol_code: str | None) -> str | None:
@@ -328,30 +331,33 @@ async def _ask_ai_pages(title: str, author: str | None, *, language: str | None 
         if language
         else " Use the edition in the book's original cover language, not an English translation."
     )
-    client = get_ai_client()
-    response = await client.chat.completions.create(
-        model=get_text_model(),
-        temperature=0.1,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You look up bibliographic data for books. "
-                    "Return JSON with key total_pages (integer or null). "
-                    "Use the mass-market paperback page count for the requested language edition."
-                    + lang_hint
-                ),
-            },
-            {"role": "user", "content": f"What is the page count for {byline}?"},
-        ],
-    )
-    raw = response.choices[0].message.content or "{}"
     try:
-        payload = _AiPagesPayload.model_validate(json.loads(raw))
-    except (json.JSONDecodeError, ValidationError):
+        client = get_ai_client()
+        response = await client.chat.completions.create(
+            model=get_text_model(),
+            temperature=0.1,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You look up bibliographic data for books. "
+                        "Return JSON with key total_pages (integer or null). "
+                        "Use the mass-market paperback page count for the requested language edition."
+                        + lang_hint
+                    ),
+                },
+                {"role": "user", "content": f"What is the page count for {byline}?"},
+            ],
+        )
+        raw = response.choices[0].message.content or "{}"
+        try:
+            payload = _AiPagesPayload.model_validate(json.loads(raw))
+        except (json.JSONDecodeError, ValidationError):
+            return None
+        return payload.total_pages
+    except Exception:
         return None
-    return payload.total_pages
 
 
 async def _finalize_result(
@@ -563,6 +569,13 @@ def format_enrich_error(exc: Exception) -> str:
         return message
     if "rate limit" in lowered or "429" in lowered:
         return "AI service is busy. Please try again in a moment."
+    if "timed out" in lowered or "timeout" in lowered:
+        return "Book lookup timed out. Please try again."
     if message:
         return f"Book lookup failed: {message.splitlines()[0]}"
+    exc_name = type(exc).__name__
+    if exc_name in {"ConnectError", "ConnectTimeout", "ReadTimeout", "PoolTimeout", "NetworkError"}:
+        return "Book lookup failed: network error. Check your connection and try again."
+    if exc_name in {"APIConnectionError", "APITimeoutError"}:
+        return "Book lookup failed: AI service unreachable. Please try again."
     return "Book lookup failed. Try again or enter the book details manually."

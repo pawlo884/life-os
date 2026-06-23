@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     # OpenRouter (recommended AI broker — OpenAI-compatible API)
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "openai/gpt-4o-mini"
-    openrouter_vision_model: str = "openai/gpt-4o-mini"
+    openrouter_model: str = "google/gemini-3.1-pro-preview"
+    openrouter_vision_model: str = "google/gemini-3.1-pro-preview"
     openrouter_app_name: str = "Life OS"
     openrouter_app_url: str = "http://localhost:5173"
 
