@@ -21,6 +21,8 @@ class Book(Base):
     status: Mapped[str] = mapped_column(String(32), default="READING")
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     cover_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    copy_status: Mapped[str] = mapped_column(String(32), default="OWNED")
+    borrowed_from: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     reading_logs: Mapped[list["ReadingLog"]] = relationship(

@@ -18,9 +18,19 @@ from app.schemas.book import (
 )
 from app.schemas.book_enrichment import BookEnrichmentResult
 from app.services.book_enrichment import enrich_book as enrich_book_details, format_enrich_error
-from app.services.books import enrich_book, log_reading_session, set_active_book
+from app.services.books import COPY_STATUSES, enrich_book, log_reading_session, set_active_book
 
 router = APIRouter(prefix="/books", tags=["books"])
+
+
+def _validate_copy_status(copy_status: str, borrowed_from: str | None) -> None:
+    if copy_status == "BORROWED" and not (borrowed_from or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="borrowed_from is required when copy_status is BORROWED",
+        )
+    if copy_status not in COPY_STATUSES:
+        raise HTTPException(status_code=400, detail=f"copy_status must be one of: {', '.join(COPY_STATUSES)}")
 
 
 @router.get("", response_model=list[BookRead])
@@ -54,6 +64,8 @@ async def create_book(payload: BookCreate, db: AsyncSession = Depends(get_db)):
         status=status,
         is_active=payload.is_active,
         cover_url=payload.cover_url,
+        copy_status=payload.copy_status,
+        borrowed_from=payload.borrowed_from.strip() if payload.borrowed_from else None,
     )
     db.add(book)
     await db.commit()
@@ -190,11 +202,18 @@ async def update_book(book_id: int, payload: BookUpdate, db: AsyncSession = Depe
         raise HTTPException(status_code=404, detail="Book not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "borrowed_from" in data and data["borrowed_from"]:
+        data["borrowed_from"] = data["borrowed_from"].strip()
     if "total_pages" in data and data["total_pages"] < book.current_page:
         raise HTTPException(
             status_code=400,
             detail="total_pages cannot be less than current_page",
         )
+
+    merged_copy_status = data.get("copy_status", book.copy_status)
+    merged_borrowed_from = data.get("borrowed_from", book.borrowed_from)
+    if "copy_status" in data or "borrowed_from" in data:
+        _validate_copy_status(merged_copy_status, merged_borrowed_from)
 
     if data.get("is_active"):
         active = await db.execute(select(Book).where(Book.is_active.is_(True), Book.id != book_id))

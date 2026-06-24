@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { enrichBook, type Book, type BookEnrichment, type ReadingLog } from "../api";
+import { COPY_STATUS_LABELS, enrichBook, type Book, type BookEnrichment, type CopyStatus, type ReadingLog } from "../api";
 
 type InputMode = "title" | "link" | "photo";
 
@@ -19,12 +19,71 @@ function languageLabel(code: string | null | undefined): string {
   return EDITION_LANGUAGES.find((l) => l.value === code)?.label ?? code.toUpperCase();
 }
 
+export function CopyStatusBadge({ book }: { book: Book }) {
+  if (book.copy_status === "OWNED") {
+    return (
+      <span className="rounded-full bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-300">
+        Na półce
+      </span>
+    );
+  }
+  if (book.copy_status === "BORROWED") {
+    return (
+      <span className="rounded-full bg-sky-900/40 px-2 py-0.5 text-xs text-sky-300">
+        Pożyczona{book.borrowed_from ? ` · ${book.borrowed_from}` : ""}
+        {book.status === "COMPLETED" ? " · do oddania" : ""}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400"
+      title={book.borrowed_from ? `Oddana — było od: ${book.borrowed_from}` : undefined}
+    >
+      Oddana{book.borrowed_from ? ` · było od ${book.borrowed_from}` : ""}
+    </span>
+  );
+}
+
+interface MarkBookReturnedButtonProps {
+  book: Book;
+  onMarkReturned: (bookId: number) => Promise<void>;
+}
+
+export function MarkBookReturnedButton({ book, onMarkReturned }: MarkBookReturnedButtonProps) {
+  const [loading, setLoading] = useState(false);
+
+  if (book.copy_status !== "BORROWED") return null;
+
+  const handleClick = async () => {
+    setLoading(true);
+    try {
+      await onMarkReturned(book.id);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      disabled={loading}
+      onClick={handleClick}
+      className="rounded-lg bg-sky-800 px-3 py-1.5 text-xs text-sky-200 hover:bg-sky-700 disabled:opacity-50"
+    >
+      {loading ? "…" : "Oddana"}
+    </button>
+  );
+}
+
 interface AddBookFormProps {
   onSubmit: (data: {
     title: string;
     author: string;
     total_pages: number;
     cover_url?: string | null;
+    copy_status?: CopyStatus;
+    borrowed_from?: string | null;
   }) => Promise<void>;
 }
 
@@ -40,6 +99,8 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
   const [author, setAuthor] = useState("");
   const [totalPages, setTotalPages] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("OWNED");
+  const [borrowedFrom, setBorrowedFrom] = useState("");
   const [editionLanguage, setEditionLanguage] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -56,6 +117,8 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
     setAuthor("");
     setTotalPages("");
     setCoverUrl("");
+    setCopyStatus("OWNED");
+    setBorrowedFrom("");
     setEditionLanguage("");
     setError(null);
   };
@@ -99,6 +162,10 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
     e.preventDefault();
     const pages = parseInt(totalPages, 10);
     if (!title || !pages) return;
+    if (copyStatus === "BORROWED" && !borrowedFrom.trim()) {
+      setError("Podaj od kogo pożyczyłeś książkę");
+      return;
+    }
     setSaveLoading(true);
     try {
       await onSubmit({
@@ -106,6 +173,8 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
         author,
         total_pages: pages,
         cover_url: coverUrl.trim() || null,
+        copy_status: copyStatus,
+        borrowed_from: copyStatus === "BORROWED" ? borrowedFrom.trim() : borrowedFrom.trim() || null,
       });
       close();
     } finally {
@@ -305,6 +374,34 @@ export function AddBookForm({ onSubmit }: AddBookFormProps) {
           }`}
           required
         />
+        <fieldset className="space-y-2">
+          <legend className="text-xs text-slate-500">Egzemplarz fizyczny</legend>
+          <div className="flex flex-wrap gap-2">
+            {(["OWNED", "BORROWED", "NONE"] as CopyStatus[]).map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setCopyStatus(status)}
+                className={`rounded-lg px-3 py-1.5 text-xs ${
+                  copyStatus === status
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                }`}
+              >
+                {COPY_STATUS_LABELS[status]}
+              </button>
+            ))}
+          </div>
+          {(copyStatus === "BORROWED" || copyStatus === "NONE") && (
+            <input
+              value={borrowedFrom}
+              onChange={(e) => setBorrowedFrom(e.target.value)}
+              placeholder={copyStatus === "BORROWED" ? "Od kogo pożyczona? *" : "Od kogo była (opcjonalnie)"}
+              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm outline-none focus:border-violet-500"
+              required={copyStatus === "BORROWED"}
+            />
+          )}
+        </fieldset>
       </div>
 
       <div className="flex gap-2">
@@ -424,6 +521,115 @@ export function EditBookCover({ book, onSave }: EditBookCoverProps) {
         >
           {lookupLoading ? "…" : "✨ Find cover"}
         </button>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={save}
+          className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs text-white hover:bg-violet-500 disabled:opacity-50"
+        >
+          {loading ? "…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={cancel}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs hover:bg-slate-700"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
+  );
+}
+
+interface EditBookCopyProps {
+  book: Book;
+  onSave: (
+    bookId: number,
+    data: { copy_status: CopyStatus; borrowed_from: string | null },
+  ) => Promise<void>;
+}
+
+export function EditBookCopy({ book, onSave }: EditBookCopyProps) {
+  const [editing, setEditing] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>(book.copy_status);
+  const [borrowedFrom, setBorrowedFrom] = useState(book.borrowed_from ?? "");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const open = () => {
+    setCopyStatus(book.copy_status);
+    setBorrowedFrom(book.borrowed_from ?? "");
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setCopyStatus(book.copy_status);
+    setBorrowedFrom(book.borrowed_from ?? "");
+    setError(null);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    if (copyStatus === "BORROWED" && !borrowedFrom.trim()) {
+      setError("Podaj od kogo pożyczona");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onSave(book.id, {
+        copy_status: copyStatus,
+        borrowed_from: borrowedFrom.trim() || null,
+      });
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={open}
+        className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700 hover:text-violet-300"
+      >
+        Egzemplarz
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-2 sm:w-auto">
+      <div className="flex flex-wrap gap-1">
+        {(["OWNED", "BORROWED", "NONE"] as CopyStatus[]).map((status) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => setCopyStatus(status)}
+            className={`rounded-lg px-2 py-1 text-xs ${
+              copyStatus === status
+                ? "bg-violet-600 text-white"
+                : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+            }`}
+          >
+            {COPY_STATUS_LABELS[status]}
+          </button>
+        ))}
+      </div>
+      {(copyStatus === "BORROWED" || copyStatus === "NONE") && (
+        <input
+          value={borrowedFrom}
+          onChange={(e) => setBorrowedFrom(e.target.value)}
+          placeholder={copyStatus === "BORROWED" ? "Od kogo? *" : "Od kogo była (opcj.)"}
+          className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs outline-none focus:border-violet-500 sm:min-w-[200px]"
+        />
+      )}
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           disabled={loading}
@@ -586,6 +792,11 @@ interface BookCardProps {
   onDelete: (id: number) => void;
   onUpdatePages: (id: number, totalPages: number) => Promise<void>;
   onUpdateCover: (id: number, coverUrl: string | null) => Promise<void>;
+  onUpdateCopy: (
+    id: number,
+    data: { copy_status: CopyStatus; borrowed_from: string | null },
+  ) => Promise<void>;
+  onMarkReturned: (id: number) => Promise<void>;
   selected: boolean;
 }
 
@@ -596,6 +807,8 @@ export function BookCard({
   onDelete,
   onUpdatePages,
   onUpdateCover,
+  onUpdateCopy,
+  onMarkReturned,
   selected,
 }: BookCardProps) {
   return (
@@ -635,6 +848,9 @@ export function BookCard({
               </span>
             </div>
           </div>
+          <div className="mt-2">
+            <CopyStatusBadge book={book} />
+          </div>
         </div>
       </div>
 
@@ -667,6 +883,8 @@ export function BookCard({
         </button>
         <EditTotalPages book={book} onSave={onUpdatePages} />
         <EditBookCover book={book} onSave={onUpdateCover} />
+        <EditBookCopy book={book} onSave={onUpdateCopy} />
+        <MarkBookReturnedButton book={book} onMarkReturned={onMarkReturned} />
         {!book.is_active && book.status !== "COMPLETED" && (
           <button
             onClick={() => onActivate(book.id)}

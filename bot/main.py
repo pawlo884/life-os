@@ -31,6 +31,18 @@ class LifeOSBot(commands.Bot):
 bot = LifeOSBot()
 
 
+def _copy_note(book: dict) -> str:
+    status = book.get("copy_status", "OWNED")
+    lender = book.get("borrowed_from")
+    if status == "BORROWED":
+        return f" · pożyczona od {lender}" if lender else " · pożyczona"
+    if status == "NONE":
+        if lender:
+            return f" · oddana (było od {lender})"
+        return " · oddana"
+    return ""
+
+
 async def api_post(path: str, payload: dict) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(f"{bot.api}{path}", json=payload)
@@ -73,9 +85,18 @@ async def read_command(interaction: discord.Interaction, page: int, book: str | 
 
 
 @bot.tree.command(name="book", description="Add a new book to your shelf")
-@app_commands.describe(title="Book title", pages="Total pages", author="Author (optional)")
+@app_commands.describe(
+    title="Book title",
+    pages="Total pages",
+    author="Author (optional)",
+    borrowed_from="Lender name — marks book as borrowed",
+)
 async def book_add_command(
-    interaction: discord.Interaction, title: str, pages: int, author: str | None = None
+    interaction: discord.Interaction,
+    title: str,
+    pages: int,
+    author: str | None = None,
+    borrowed_from: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
     payload = {
@@ -85,11 +106,16 @@ async def book_add_command(
     }
     if author:
         payload["author"] = author
+    if borrowed_from:
+        payload["copy_status"] = "BORROWED"
+        payload["borrowed_from"] = borrowed_from
     try:
         result = await api_post("/books", payload)
+        copy_note = _copy_note(result)
         await interaction.followup.send(
             f"Added **{result['title']}** ({pages} pages)"
             + (f" by {author}" if author else "")
+            + copy_note
             + " — set as active."
         )
     except httpx.HTTPError as exc:
@@ -111,7 +137,7 @@ async def books_command(interaction: discord.Interaction):
             marker = "📖 " if b["is_active"] else "   "
             lines.append(
                 f"{marker}**{b['title']}** — {b['current_page']}/{b['total_pages']} "
-                f"({b['completion_percent']}%) [{b['status']}]"
+                f"({b['completion_percent']}%) [{b['status']}]{_copy_note(b)}"
             )
         await interaction.followup.send("\n".join(lines))
     except httpx.HTTPError as exc:

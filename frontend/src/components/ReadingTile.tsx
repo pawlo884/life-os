@@ -2,35 +2,49 @@ import { useCallback, useEffect, useState } from "react";
 import {
   activateBook,
   createBook,
+  createWishlistItem,
   deleteBook,
+  deleteWishlistItem,
   fetchApi,
   getBookLogs,
+  getWishlist,
   logReading,
+  moveWishlistToShelf,
   updateBook,
+  updateWishlistItem,
   type Book,
   type ReadingLog,
   type ReadingOverview,
+  type WishlistBook,
+  type CopyStatus,
 } from "../api";
-import { AddBookForm, BookCard, DeleteBookButton, EditBookCover, EditTotalPages, LogCurrentPageForm, ReadingHistory } from "./Books";
+import { AddBookForm, BookCard, CopyStatusBadge, DeleteBookButton, EditBookCover, EditBookCopy, EditTotalPages, LogCurrentPageForm, MarkBookReturnedButton, ReadingHistory } from "./Books";
+import { AddWishlistForm, WishlistCard } from "./Wishlist";
 import { Heatmap } from "./Heatmap";
 import { DashboardTile } from "./DashboardTile";
 
+type ReadingTab = "shelf" | "wishlist";
+
 export function ReadingTile() {
   const [books, setBooks] = useState<Book[]>([]);
+  const [wishlist, setWishlist] = useState<WishlistBook[]>([]);
   const [overview, setOverview] = useState<ReadingOverview | null>(null);
   const [heatmap, setHeatmap] = useState<Record<string, number>>({});
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
   const [logs, setLogs] = useState<ReadingLog[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const [tab, setTab] = useState<ReadingTab>("shelf");
 
   const load = useCallback(async () => {
-    const [b, o, h] = await Promise.all([
+    const [b, w, o, h] = await Promise.all([
       fetchApi<Book[]>("/books"),
+      getWishlist(),
       fetchApi<ReadingOverview>("/books/overview"),
       fetchApi<Record<string, number>>("/books/heatmap"),
     ]);
     setBooks(b);
+    setWishlist(w);
     setOverview(o);
     setHeatmap(h);
     setError(null);
@@ -63,12 +77,16 @@ export function ReadingTile() {
     author: string;
     total_pages: number;
     cover_url?: string | null;
+    copy_status?: CopyStatus;
+    borrowed_from?: string | null;
   }) => {
     await createBook({
       title: data.title,
       author: data.author || undefined,
       total_pages: data.total_pages,
       cover_url: data.cover_url,
+      copy_status: data.copy_status,
+      borrowed_from: data.borrowed_from,
       is_active: books.length === 0,
     });
     await load();
@@ -99,6 +117,57 @@ export function ReadingTile() {
 
   const handleUpdateCover = async (bookId: number, coverUrl: string | null) => {
     await updateBook(bookId, { cover_url: coverUrl });
+    await load();
+  };
+
+  const handleUpdateCopy = async (
+    bookId: number,
+    data: { copy_status: CopyStatus; borrowed_from: string | null },
+  ) => {
+    await updateBook(bookId, data);
+    await load();
+  };
+
+  const handleMarkReturned = async (bookId: number) => {
+    const book = books.find((b) => b.id === bookId);
+    await updateBook(bookId, {
+      copy_status: "NONE",
+      borrowed_from: book?.borrowed_from ?? null,
+    });
+    await load();
+  };
+
+  const handleAddWishlist = async (data: {
+    title: string;
+    author?: string | null;
+    note?: string | null;
+    cover_url?: string | null;
+    source_url?: string | null;
+    total_pages?: number | null;
+  }) => {
+    await createWishlistItem(data);
+    await load();
+    setTab("wishlist");
+    setExpanded(true);
+  };
+
+  const handleDeleteWishlist = async (itemId: number) => {
+    try {
+      await deleteWishlistItem(itemId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove item");
+    }
+  };
+
+  const handleMoveWishlistToShelf = async (itemId: number, totalPages?: number) => {
+    await moveWishlistToShelf(itemId, totalPages ? { total_pages: totalPages } : undefined);
+    await load();
+    setTab("shelf");
+  };
+
+  const handleUpdateWishlistNote = async (itemId: number, note: string | null) => {
+    await updateWishlistItem(itemId, { note });
     await load();
   };
 
@@ -141,6 +210,9 @@ export function ReadingTile() {
                   {activeBook.author && (
                     <p className="text-sm text-slate-400">{activeBook.author}</p>
                   )}
+                  <div className="mt-2">
+                    <CopyStatusBadge book={activeBook} />
+                  </div>
                 </div>
                 <DeleteBookButton
                   compact
@@ -170,6 +242,8 @@ export function ReadingTile() {
           <div className="mb-3 flex flex-wrap gap-2">
             <EditTotalPages book={activeBook} onSave={handleUpdatePages} />
             <EditBookCover book={activeBook} onSave={handleUpdateCover} />
+            <EditBookCopy book={activeBook} onSave={handleUpdateCopy} />
+            <MarkBookReturnedButton book={activeBook} onMarkReturned={handleMarkReturned} />
           </div>
           <LogCurrentPageForm
             onSubmit={handleLogCurrentPage}
@@ -184,40 +258,93 @@ export function ReadingTile() {
         onClick={() => setExpanded((v) => !v)}
         className="mb-4 text-sm text-slate-400 hover:text-slate-200"
       >
-        {expanded ? "▾ Hide shelf" : "▸ Show shelf & heatmap"}
+        {expanded ? "▾ Hide details" : "▸ Show shelf, wishlist & heatmap"}
       </button>
 
       {expanded && (
         <>
-          <div className="mb-4">
-            <AddBookForm onSubmit={handleAddBook} />
+          <div className="mb-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setTab("shelf")}
+              className={`rounded-lg px-4 py-2 text-sm ${
+                tab === "shelf"
+                  ? "bg-violet-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+              }`}
+            >
+              My shelf ({books.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("wishlist")}
+              className={`rounded-lg px-4 py-2 text-sm ${
+                tab === "wishlist"
+                  ? "bg-amber-600 text-white"
+                  : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+              }`}
+            >
+              To buy ({wishlist.length})
+            </button>
           </div>
-          <div className="mb-5 grid gap-3 sm:grid-cols-2">
-            {books.map((book) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                onActivate={handleActivate}
-                onSelect={setSelectedBookId}
-                onDelete={handleDelete}
-                onUpdatePages={handleUpdatePages}
-                onUpdateCover={handleUpdateCover}
-                selected={selectedBookId === book.id}
-              />
-            ))}
-          </div>
-          {books.length === 0 && (
-            <p className="mb-5 text-center text-sm text-slate-500">Add your first book above.</p>
+
+          {tab === "shelf" ? (
+            <>
+              <div className="mb-4">
+                <AddBookForm onSubmit={handleAddBook} />
+              </div>
+              <div className="mb-5 grid gap-3 sm:grid-cols-2">
+                {books.map((book) => (
+                  <BookCard
+                    key={book.id}
+                    book={book}
+                    onActivate={handleActivate}
+                    onSelect={setSelectedBookId}
+                    onDelete={handleDelete}
+                    onUpdatePages={handleUpdatePages}
+                    onUpdateCover={handleUpdateCover}
+                    onUpdateCopy={handleUpdateCopy}
+                    onMarkReturned={handleMarkReturned}
+                    selected={selectedBookId === book.id}
+                  />
+                ))}
+              </div>
+              {books.length === 0 && (
+                <p className="mb-5 text-center text-sm text-slate-500">Add your first book above.</p>
+              )}
+              {selectedBook && (
+                <div className="mb-5">
+                  <h4 className="mb-2 text-sm font-medium text-slate-300">
+                    History — {selectedBook.title}
+                  </h4>
+                  <ReadingHistory logs={logs} bookTitle={selectedBook.title} />
+                </div>
+              )}
+              <Heatmap data={heatmap} unit="pages" />
+            </>
+          ) : (
+            <>
+              <div className="mb-4">
+                <AddWishlistForm onSubmit={handleAddWishlist} />
+              </div>
+              <div className="mb-5 grid gap-3 sm:grid-cols-2">
+                {wishlist.map((item) => (
+                  <WishlistCard
+                    key={item.id}
+                    item={item}
+                    onDelete={handleDeleteWishlist}
+                    onMoveToShelf={handleMoveWishlistToShelf}
+                    onUpdateNote={handleUpdateWishlistNote}
+                  />
+                ))}
+              </div>
+              {wishlist.length === 0 && (
+                <p className="mb-5 text-center text-sm text-slate-500">
+                  Nothing on the list yet — add a title, link or screenshot.
+                </p>
+              )}
+            </>
           )}
-          {selectedBook && (
-            <div className="mb-5">
-              <h4 className="mb-2 text-sm font-medium text-slate-300">
-                History — {selectedBook.title}
-              </h4>
-              <ReadingHistory logs={logs} bookTitle={selectedBook.title} />
-            </div>
-          )}
-          <Heatmap data={heatmap} unit="pages" />
         </>
       )}
     </DashboardTile>

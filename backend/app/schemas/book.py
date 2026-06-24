@@ -1,6 +1,9 @@
 from datetime import date
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+CopyStatus = Literal["OWNED", "BORROWED", "NONE"]
 
 
 class BookBase(BaseModel):
@@ -10,6 +13,14 @@ class BookBase(BaseModel):
     current_page: int = Field(default=0, ge=0)
     status: str = "READING"
     cover_url: str | None = Field(default=None, max_length=512)
+    copy_status: CopyStatus = "OWNED"
+    borrowed_from: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def borrowed_requires_lender(self) -> "BookBase":
+        if self.copy_status == "BORROWED" and not (self.borrowed_from or "").strip():
+            raise ValueError("borrowed_from is required when copy_status is BORROWED")
+        return self
 
 
 class BookCreate(BookBase):
@@ -24,6 +35,8 @@ class BookUpdate(BaseModel):
     status: str | None = None
     is_active: bool | None = None
     cover_url: str | None = Field(default=None, max_length=512)
+    copy_status: CopyStatus | None = None
+    borrowed_from: str | None = Field(default=None, max_length=255)
 
 
 class BookRead(BookBase):

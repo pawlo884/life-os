@@ -36,6 +36,14 @@ export async function fetchApi<T>(path: string, options?: RequestInit): Promise<
   return response.json();
 }
 
+export type CopyStatus = "OWNED" | "BORROWED" | "NONE";
+
+export const COPY_STATUS_LABELS: Record<CopyStatus, string> = {
+  OWNED: "Na półce",
+  BORROWED: "Pożyczona",
+  NONE: "Oddana",
+};
+
 export interface Book {
   id: number;
   title: string;
@@ -45,6 +53,8 @@ export interface Book {
   status: string;
   is_active: boolean;
   cover_url: string | null;
+  copy_status: CopyStatus;
+  borrowed_from: string | null;
   completion_percent: number;
   remaining_pages: number;
   avg_pages_per_day: number | null;
@@ -81,6 +91,8 @@ export async function createBook(data: {
   current_page?: number;
   is_active?: boolean;
   cover_url?: string | null;
+  copy_status?: CopyStatus;
+  borrowed_from?: string | null;
 }): Promise<Book> {
   return fetchApi<Book>("/books", {
     method: "POST",
@@ -117,6 +129,8 @@ export async function updateBook(
     status?: string;
     is_active?: boolean;
     cover_url?: string | null;
+    copy_status?: CopyStatus;
+    borrowed_from?: string | null;
   },
 ): Promise<Book> {
   return fetchApi<Book>(`/books/${bookId}`, {
@@ -141,4 +155,64 @@ export async function enrichBook(input: {
   if (input.language) form.append("language", input.language);
   if (input.cover_only) form.append("cover_only", "true");
   return fetchApi<BookEnrichment>("/books/enrich", { method: "POST", body: form });
+}
+
+export interface WishlistBook {
+  id: number;
+  title: string;
+  author: string | null;
+  note: string | null;
+  cover_url: string | null;
+  source_url: string | null;
+  total_pages: number | null;
+  created_at: string;
+}
+
+export async function getWishlist(): Promise<WishlistBook[]> {
+  return fetchApi<WishlistBook[]>("/wishlist");
+}
+
+export async function createWishlistItem(data: {
+  title: string;
+  author?: string | null;
+  note?: string | null;
+  cover_url?: string | null;
+  source_url?: string | null;
+  total_pages?: number | null;
+}): Promise<WishlistBook> {
+  return fetchApi<WishlistBook>("/wishlist", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateWishlistItem(
+  itemId: number,
+  data: {
+    title?: string;
+    author?: string | null;
+    note?: string | null;
+    cover_url?: string | null;
+    source_url?: string | null;
+    total_pages?: number | null;
+  },
+): Promise<WishlistBook> {
+  return fetchApi<WishlistBook>(`/wishlist/${itemId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteWishlistItem(itemId: number): Promise<void> {
+  await fetchApi<void>(`/wishlist/${itemId}`, { method: "DELETE" });
+}
+
+export async function moveWishlistToShelf(
+  itemId: number,
+  data?: { total_pages?: number; is_active?: boolean },
+): Promise<Book> {
+  return fetchApi<Book>(`/wishlist/${itemId}/move-to-shelf`, {
+    method: "POST",
+    body: JSON.stringify(data ?? {}),
+  });
 }

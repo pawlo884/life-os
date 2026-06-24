@@ -8,6 +8,7 @@ from app.models.reading_log import ReadingLog
 from app.schemas.book import BookRead, ReadingSessionResult
 
 BOOK_STATUSES = ("READING", "COMPLETED", "PAUSED", "QUEUED")
+COPY_STATUSES = ("OWNED", "BORROWED", "NONE")
 LOOKBACK_DAYS = 14
 
 
@@ -23,6 +24,8 @@ def _book_to_read(book: Book, avg_pages: float | None = None, eta: date | None =
         status=book.status,
         is_active=book.is_active,
         cover_url=book.cover_url,
+        copy_status=book.copy_status,
+        borrowed_from=book.borrowed_from,
         completion_percent=percent,
         remaining_pages=remaining,
         avg_pages_per_day=avg_pages,
