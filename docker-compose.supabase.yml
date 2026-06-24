@@ -1,5 +1,5 @@
-# Supabase override — use instead of bundled Postgres:
-# docker compose -f docker-compose.yml -f docker-compose.supabase.yml up
+# Supabase override — cloud Postgres instead of local db container:
+#   docker compose -f docker-compose.yml -f docker-compose.supabase.yml up -d
 services:
   api:
     environment:
@@ -9,6 +9,7 @@ services:
   seed:
     environment:
       DATABASE_URL: ${DATABASE_URL}
+    depends_on: !reset []
 
   db:
     profiles: ["local-db"]

@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import Base, engine
+import app.models  # noqa: F401 — ensure all tables register before create_all
 from app.routers import api, books
 
 
