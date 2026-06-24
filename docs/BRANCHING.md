@@ -14,10 +14,9 @@
 
 | Branch | Module |
 |--------|--------|
-| `feature/reading-module` | Books, reading logs, dashboard tile, AI lookup |
+| `feature/reading-module` | **Główny moduł** — books, reading logs, dashboard, AI lookup |
 | `feature/workouts-module` | Fitness, Strava, streaks *(planned)* |
 | `feature/job-hunt-module` | Applications CRM, Kanban *(planned)* |
-| `feature/learning-module` | Courses & modules *(planned)* |
 
 ## Workflow
 
