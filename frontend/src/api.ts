@@ -1,51 +1,144 @@
+export interface BookEnrichment {
+  title: string;
+  author: string | null;
+  total_pages: number | null;
+  cover_url: string | null;
+  language: string | null;
+  source: string;
+  confidence: string;
+}
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
-export async function fetchApi<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`);
+export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const isFormData = options?.body instanceof FormData;
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: isFormData
+      ? options?.headers
+      : { "Content-Type": "application/json", ...options?.headers },
+  });
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    const body = await response.json().catch(() => ({}));
+    const detail = body.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((d: { msg?: string }) => d.msg).join(", ")
+      : typeof detail === "string"
+        ? detail.replace(/\s+/g, " ").trim()
+        : detail
+          ? String(detail)
+          : `API error: ${response.status}`;
+    throw new Error(message);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return response.json();
 }
 
-export interface DailyReport {
-  date: string;
-  applications_sent_today: number;
-  fitness_streak_days: number;
-  streak_at_risk: boolean;
-  active_book: string | null;
-  remaining_book_pages: number | null;
-}
-
-export interface StreakInfo {
-  current_streak: number;
-  last_activity_date: string | null;
-  at_risk: boolean;
-}
-
-export interface JobApplication {
+export interface Book {
   id: number;
-  company: string;
-  role: string;
-  status: string;
-  tech_stack: string | null;
-  notes: string | null;
-  applied_date: string | null;
-}
-
-export interface LearningProgress {
-  id: number;
-  resource_type: string;
   title: string;
-  total_units: number;
-  completed_units: number;
+  author: string | null;
+  total_pages: number;
+  current_page: number;
   status: string;
+  is_active: boolean;
+  cover_url: string | null;
   completion_percent: number;
+  remaining_pages: number;
+  avg_pages_per_day: number | null;
+  estimated_completion_date: string | null;
 }
 
-export interface WeeklyJobStats {
-  week_start: string;
-  applications_sent: number;
-  kpi_target: number;
-  kpi_met: boolean;
+export interface ReadingLog {
+  id: number;
+  book_id: number;
+  pages_read: number;
+  log_date: string;
+  note: string | null;
+}
+
+export interface ReadingOverview {
+  pages_today: number;
+  pages_this_week: number;
+  active_book: Book | null;
+  books_reading: number;
+  books_completed: number;
+}
+
+export interface ReadingSessionResult {
+  book: Book;
+  pages_logged: number;
+  current_page: number;
+  log_date: string;
+}
+
+export async function createBook(data: {
+  title: string;
+  author?: string;
+  total_pages: number;
+  current_page?: number;
+  is_active?: boolean;
+  cover_url?: string | null;
+}): Promise<Book> {
+  return fetchApi<Book>("/books", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function logReading(currentPage: number, bookId?: number): Promise<ReadingSessionResult> {
+  return fetchApi<ReadingSessionResult>("/books/read", {
+    method: "POST",
+    body: JSON.stringify({ current_page: currentPage, book_id: bookId }),
+  });
+}
+
+export async function activateBook(bookId: number): Promise<Book> {
+  return fetchApi<Book>(`/books/${bookId}/activate`, { method: "POST" });
+}
+
+export async function getBookLogs(bookId: number): Promise<ReadingLog[]> {
+  return fetchApi<ReadingLog[]>(`/books/${bookId}/logs`);
+}
+
+export async function deleteBook(bookId: number): Promise<void> {
+  await fetchApi<void>(`/books/${bookId}`, { method: "DELETE" });
+}
+
+export async function updateBook(
+  bookId: number,
+  data: {
+    title?: string;
+    author?: string | null;
+    total_pages?: number;
+    current_page?: number;
+    status?: string;
+    is_active?: boolean;
+    cover_url?: string | null;
+  },
+): Promise<Book> {
+  return fetchApi<Book>(`/books/${bookId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function enrichBook(input: {
+  title?: string;
+  author?: string;
+  url?: string;
+  image?: File;
+  language?: string;
+  cover_only?: boolean;
+}): Promise<BookEnrichment> {
+  const form = new FormData();
+  if (input.title) form.append("title", input.title);
+  if (input.author) form.append("author", input.author);
+  if (input.url) form.append("url", input.url);
+  if (input.image) form.append("image", input.image);
+  if (input.language) form.append("language", input.language);
+  if (input.cover_only) form.append("cover_only", "true");
+  return fetchApi<BookEnrichment>("/books/enrich", { method: "POST", body: form });
 }
